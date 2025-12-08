@@ -1,0 +1,10 @@
+# PostgreSQL接続用
+psycopg2-binary>=2.9.0
+
+# Sentence Transformers用（intfloat/multilingual-e5-large使用）
+sentence-transformers>=2.2.0
+torch>=2.0.0
+
+# 数値計算用
+numpy>=1.24.0
+
