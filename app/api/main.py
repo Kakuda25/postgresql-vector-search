@@ -25,6 +25,7 @@ web_dir = Path(__file__).resolve().parent.parent / "web"
 app.mount("/assets", StaticFiles(directory=str(web_dir)), name="assets")
 
 _model_cache: SentenceTransformer | None = None
+_model_lock = threading.Lock()
 _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
 
@@ -62,7 +63,9 @@ def _get_connection():
 def _get_model() -> SentenceTransformer:
     global _model_cache
     if _model_cache is None:
-        _model_cache = SentenceTransformer(MODEL_NAME)
+        with _model_lock:
+            if _model_cache is None:
+                _model_cache = SentenceTransformer(MODEL_NAME)
     return _model_cache
 
 
@@ -131,15 +134,23 @@ def _run_embedding_job(job_id: str, mode: str):
     model = _get_model()
     try:
         cur = conn.cursor()
-        where_clause = "WHERE embedding IS NULL" if mode == "missing" else ""
-        cur.execute(
-            f"""
-            SELECT id, product_code, name, description
-            FROM products
-            {where_clause}
-            ORDER BY id
-            """
-        )
+        if mode == "missing":
+            cur.execute(
+                """
+                SELECT id, product_code, name, description
+                FROM products
+                WHERE embedding IS NULL
+                ORDER BY id
+                """
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, product_code, name, description
+                FROM products
+                ORDER BY id
+                """
+            )
         targets = cur.fetchall()
 
         with _jobs_lock:
@@ -227,29 +238,32 @@ def get_products(q: str | None = None, embeddingStatus: str | None = None, limit
     conn = _get_connection()
     try:
         cur = conn.cursor()
-        conditions = []
         params: list[Any] = []
+        filters = []
 
         if q:
-            conditions.append("(name ILIKE %s OR product_code ILIKE %s)")
+            filters.append("(name ILIKE %s OR product_code ILIKE %s)")
             params.extend([f"%{q}%", f"%{q}%"])
         if embeddingStatus == "embedded":
-            conditions.append("embedding IS NOT NULL")
+            filters.append("embedding IS NOT NULL")
         elif embeddingStatus == "missing":
-            conditions.append("embedding IS NULL")
+            filters.append("embedding IS NULL")
 
-        where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params.append(limit)
-        cur.execute(
-            f"""
-            SELECT id, product_code, name, price, (embedding IS NOT NULL) AS embedded
-            FROM products
-            {where_sql}
-            ORDER BY id
-            LIMIT %s
-            """,
-            tuple(params),
-        )
+
+        if filters:
+            placeholders = " AND ".join(filters)
+            cur.execute(
+                f"SELECT id, product_code, name, price, (embedding IS NOT NULL) AS embedded"
+                f" FROM products WHERE {placeholders} ORDER BY id LIMIT %s",
+                tuple(params),
+            )
+        else:
+            cur.execute(
+                "SELECT id, product_code, name, price, (embedding IS NOT NULL) AS embedded"
+                " FROM products ORDER BY id LIMIT %s",
+                tuple(params),
+            )
         rows = cur.fetchall()
     finally:
         conn.close()

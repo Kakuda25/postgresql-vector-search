@@ -32,17 +32,25 @@ def adjust_dimension(embedding: np.ndarray, target_dim: int = VECTOR_DIMENSION) 
 
 def parse_vector_string(vector_str: str) -> np.ndarray:
     """PostgreSQLのvector型文字列をnumpy配列に変換
-    
+
     PostgreSQLのvector型は "[0.1,0.2,0.3,...]" 形式の文字列として返される。
-    
+
     Args:
         vector_str: PostgreSQLのvector型文字列
-    
+
     Returns:
         numpy配列
+
+    Raises:
+        ValueError: 不正なベクトル文字列の場合
     """
-    vector_str = vector_str.strip('[]')
-    return np.array([float(x) for x in vector_str.split(',')], dtype=np.float32)
+    try:
+        values = [float(x) for x in vector_str.strip('[]').split(',')]
+    except (ValueError, AttributeError) as e:
+        raise ValueError(f"不正なベクトル文字列です: {e}") from e
+    if not values:
+        raise ValueError("空のベクトル文字列です")
+    return np.array(values, dtype=np.float32)
 
 
 def ensure_same_dimension(embedding1: np.ndarray, embedding2: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
