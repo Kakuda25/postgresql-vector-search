@@ -1,17 +1,45 @@
+// APIリクエスト（タイムアウト30秒付き）
 async function api(path, options = {}) {
-  const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || "API error");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const res = await fetch(path, {
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      ...options,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${res.status}`);
+    }
+    return res.json();
+  } catch (err) {
+    if (err.name === "AbortError") throw new Error("タイムアウト: サーバーの応答がありません");
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  return res.json();
 }
 
 function yen(value) {
   return new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).format(value);
+}
+
+// テキストセルを安全に生成（XSS対策）
+function td(text) {
+  const el = document.createElement("td");
+  el.textContent = text ?? "-";
+  return el;
+}
+
+// ボタンを非活性にして非同期処理を実行（多重押し防止）
+async function withButton(btn, fn) {
+  btn.disabled = true;
+  try {
+    await fn();
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function loadSummary() {
@@ -25,7 +53,14 @@ async function loadSummary() {
   ].forEach(([label, value]) => {
     const card = document.createElement("div");
     card.className = "kpi-card";
-    card.innerHTML = `<div class="label">${label}</div><div class="value">${value}</div>`;
+    const labelEl = document.createElement("div");
+    labelEl.className = "label";
+    labelEl.textContent = label;
+    const valueEl = document.createElement("div");
+    valueEl.className = "value";
+    valueEl.textContent = value;
+    card.appendChild(labelEl);
+    card.appendChild(valueEl);
     root.appendChild(card);
   });
 }
@@ -50,14 +85,12 @@ async function loadProducts() {
     state.textContent = `${data.items.length}件表示`;
     data.items.forEach((item) => {
       const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${item.id}</td>
-        <td>${item.productCode}</td>
-        <td>${item.name}</td>
-        <td>${item.category || "-"}</td>
-        <td>${yen(item.price)}</td>
-        <td>${item.embeddingStatus}</td>
-      `;
+      tr.appendChild(td(item.id));
+      tr.appendChild(td(item.productCode));
+      tr.appendChild(td(item.name));
+      tr.appendChild(td(item.category));
+      tr.appendChild(td(yen(item.price)));
+      tr.appendChild(td(item.embeddingStatus));
       tbody.appendChild(tr);
     });
   } catch (err) {
@@ -70,11 +103,31 @@ async function runSearch() {
   const tbody = document.querySelector("#searchTable tbody");
   state.textContent = "検索中...";
   tbody.innerHTML = "";
+
   try {
     const type = document.getElementById("queryType").value;
     const queryValue = document.getElementById("queryValue").value.trim();
     const topK = Number(document.getElementById("topK").value || 10);
     const scoreThreshold = Number(document.getElementById("threshold").value || 0);
+
+    // 入力バリデーション
+    if (!queryValue) {
+      state.textContent = "エラー: 検索クエリを入力してください。";
+      return;
+    }
+    if (queryValue.length > 500) {
+      state.textContent = "エラー: 検索クエリは500文字以内で入力してください。";
+      return;
+    }
+    if (!Number.isInteger(topK) || topK < 1 || topK > 50) {
+      state.textContent = "エラー: 取得件数は1〜50の整数で入力してください。";
+      return;
+    }
+    if (isNaN(scoreThreshold) || scoreThreshold < -1 || scoreThreshold > 1) {
+      state.textContent = "エラー: 閾値は-1〜1の範囲で入力してください。";
+      return;
+    }
+
     const payload = { type, topK, scoreThreshold };
     if (type === "product") payload.productId = Number(queryValue);
     else payload.text = queryValue;
@@ -90,13 +143,11 @@ async function runSearch() {
     state.textContent = `${data.items.length}件`;
     data.items.forEach((item) => {
       const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${item.rank}</td>
-        <td>${item.score.toFixed(4)}</td>
-        <td>${item.productCode}</td>
-        <td>${item.name}</td>
-        <td>${item.category || "-"}</td>
-      `;
+      tr.appendChild(td(item.rank));
+      tr.appendChild(td(item.score.toFixed(4)));
+      tr.appendChild(td(item.productCode));
+      tr.appendChild(td(item.name));
+      tr.appendChild(td(item.category));
       tbody.appendChild(tr);
     });
   } catch (err) {
@@ -106,9 +157,20 @@ async function runSearch() {
 
 let currentJobId = null;
 let pollTimer = null;
+let pollCount = 0;
+const MAX_POLL = 200; // 最大5分 (1.5秒 × 200回)
 
 async function pollJob() {
   if (!currentJobId) return;
+
+  pollCount++;
+  if (pollCount > MAX_POLL) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+    document.getElementById("jobState").textContent = "タイムアウト: ジョブの完了を確認できませんでした。";
+    return;
+  }
+
   try {
     const job = await api(`/api/embeddings/jobs/${currentJobId}`);
     document.getElementById("jobState").textContent =
@@ -133,6 +195,7 @@ async function startEmbeddingJob() {
     body: JSON.stringify({ mode }),
   });
   currentJobId = result.jobId;
+  pollCount = 0;
   document.getElementById("jobState").textContent = `job開始: ${currentJobId}`;
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(pollJob, 1500);
@@ -148,12 +211,22 @@ async function loadHealth() {
   }
 }
 
-document.getElementById("loadProductsBtn").addEventListener("click", loadProducts);
-document.getElementById("runSearchBtn").addEventListener("click", runSearch);
-document.getElementById("startJobBtn").addEventListener("click", () => {
-  startEmbeddingJob().catch((err) => {
-    document.getElementById("jobState").textContent = `エラー: ${err.message}`;
-  });
+const loadProductsBtn = document.getElementById("loadProductsBtn");
+const runSearchBtn = document.getElementById("runSearchBtn");
+const startJobBtn = document.getElementById("startJobBtn");
+
+loadProductsBtn.addEventListener("click", () => {
+  withButton(loadProductsBtn, loadProducts);
+});
+runSearchBtn.addEventListener("click", () => {
+  withButton(runSearchBtn, runSearch);
+});
+startJobBtn.addEventListener("click", () => {
+  withButton(startJobBtn, () =>
+    startEmbeddingJob().catch((err) => {
+      document.getElementById("jobState").textContent = `エラー: ${err.message}`;
+    })
+  );
 });
 
 const loadedViews = {
@@ -195,10 +268,10 @@ async function renderRoute() {
 }
 
 window.addEventListener("hashchange", () => {
-  renderRoute().catch(() => {});
+  renderRoute().catch((err) => console.error("ルート描画エラー:", err));
 });
 
 if (!window.location.hash) {
   window.location.hash = "#/dashboard";
 }
-renderRoute().catch(() => {});
+renderRoute().catch((err) => console.error("初期描画エラー:", err));
