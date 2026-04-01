@@ -14,7 +14,7 @@
     - POSTGRES_PASSWORD: パスワード
 
 使用モデル:
-    - intfloat/multilingual-e5-large（固定）
+    - BAAI/bge-m3（固定）
 """
 
 import sys
@@ -41,39 +41,28 @@ from app.utils.vector_utils import adjust_dimension, VECTOR_DIMENSION
 # モデルキャッシュ（グローバル変数）
 _model_cache = None
 
-def get_embedding(text: str, model_name: str = "intfloat/multilingual-e5-large", prefix: str = "passage: ") -> List[float]:
+def get_embedding(text: str, model_name: str = "BAAI/bge-m3") -> List[float]:
     """Sentence Transformersを使用してベクトルを生成
-    
-    multilingual-e5-largeモデルは1024次元を出力するが、データベースのvector型は1536次元に設定されているため、
-    ゼロパディングで次元数を調整する。
-    
+
     Args:
         text: ベクトル化するテキスト
         model_name: 使用するモデル名
-        prefix: テキストに追加するプレフィックス（multilingual-e5-largeでは必須）
-    
+
     Returns:
-        ベクトル（リスト形式、1536次元）
+        ベクトル（リスト形式、1024次元）
     """
     global _model_cache
-    
+
     if _model_cache is None:
         print(f"モデルを読み込み中: {model_name}...")
         print("（初回のみ時間がかかります）")
         _model_cache = SentenceTransformer(model_name)
-    
-    model = _model_cache
-    
-    if not text.startswith("query: ") and not text.startswith("passage: "):
-        text = prefix + text
-    
-    embedding = model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
-    embedding = adjust_dimension(embedding)
-    
+
+    embedding = _model_cache.encode(text, convert_to_numpy=True, normalize_embeddings=True)
     return embedding.tolist()
 
 
-def update_embeddings_in_db(connection, model_name: str = "intfloat/multilingual-e5-large"):
+def update_embeddings_in_db(connection, model_name: str = "BAAI/bge-m3"):
     """データベース内の商品データにベクトルを追加"""
     cursor = connection.cursor()
     
@@ -102,7 +91,7 @@ def update_embeddings_in_db(connection, model_name: str = "intfloat/multilingual
                 text += f" {description}"
             
             try:
-                embedding = get_embedding(text, model_name, prefix="passage: ")
+                embedding = get_embedding(text, model_name)
                 embedding_str = "[" + ",".join(map(str, embedding)) + "]"
                 
                 cursor.execute("""
@@ -131,15 +120,15 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="商品データのベクトル生成スクリプト（intfloat/multilingual-e5-large使用）",
+        description="商品データのベクトル生成スクリプト（BAAI/bge-m3使用）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用例:
   python app/scripts/generate-embeddings.py
-  python app/scripts/generate-embeddings.py --model intfloat/multilingual-e5-large
+  python app/scripts/generate-embeddings.py --model BAAI/bge-m3
         """
     )
-    parser.add_argument("--model", default="intfloat/multilingual-e5-large", help="使用するモデル名（デフォルト: intfloat/multilingual-e5-large）")
+    parser.add_argument("--model", default="BAAI/bge-m3", help="使用するモデル名（デフォルト: BAAI/bge-m3）")
     
     args = parser.parse_args()
     

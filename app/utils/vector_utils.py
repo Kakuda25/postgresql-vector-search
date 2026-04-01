@@ -7,19 +7,16 @@ import numpy as np
 from typing import List, Tuple
 
 
-VECTOR_DIMENSION = 1536
+VECTOR_DIMENSION = 1024
 
 
 def adjust_dimension(embedding: np.ndarray, target_dim: int = VECTOR_DIMENSION) -> np.ndarray:
     """ベクトルの次元数を調整
-    
-    multilingual-e5-largeは1024次元を出力するが、データベースのvector型は1536次元に設定されているため、
-    ゼロパディングで次元数を調整する。
-    
+
     Args:
         embedding: 調整対象のベクトル
-        target_dim: 目標次元数（デフォルト: 1536）
-    
+        target_dim: 目標次元数（デフォルト: 1024）
+
     Returns:
         次元数調整後のベクトル
     """

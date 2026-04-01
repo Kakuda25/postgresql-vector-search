@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS products (
     image_url VARCHAR(500),
     weight_kg DECIMAL(8, 2),
     dimensions VARCHAR(100),
-    embedding vector(1536),
+    embedding vector(1024),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -46,7 +46,6 @@ CREATE TRIGGER update_product_stocks_updated_at
     EXECUTE FUNCTION update_updated_at_column();
 
 -- embeddingカラム: 商品名と説明をベクトル化した埋め込みベクトル（AI生成）
--- 1536次元はOpenAI text-embedding-ada-002の次元数に合わせている
--- 他のモデルを使用する場合は次元数を変更する必要がある
-COMMENT ON COLUMN products.embedding IS '商品名と説明をベクトル化した埋め込みベクトル（AI生成）。デフォルトは1536次元（OpenAI text-embedding-ada-002など）。';
+-- 1024次元はBAAI/bge-m3モデルの出力次元数
+COMMENT ON COLUMN products.embedding IS '商品名と説明をベクトル化した埋め込みベクトル（AI生成）。1024次元（BAAI/bge-m3）。';
 

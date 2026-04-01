@@ -17,7 +17,7 @@ from sentence_transformers import SentenceTransformer
 from app.utils.env_loader import get_db_config
 from app.utils.vector_utils import adjust_dimension, parse_vector_string
 
-MODEL_NAME = "intfloat/multilingual-e5-large"
+MODEL_NAME = "BAAI/bge-m3"
 
 app = FastAPI(title="PostgreSQL Vector Search UI API", version="0.1.0")
 
@@ -65,17 +65,6 @@ def _get_model() -> SentenceTransformer:
         _model_cache = SentenceTransformer(MODEL_NAME)
     return _model_cache
 
-
-def _normalize_query_text(text: str) -> str:
-    if text.startswith("query: "):
-        return text
-    return f"query: {text}"
-
-
-def _normalize_passage_text(text: str) -> str:
-    if text.startswith("passage: "):
-        return text
-    return f"passage: {text}"
 
 
 def _search_with_vector(query_embedding: np.ndarray, top_k: int, score_threshold: float, category: str | None):
@@ -160,7 +149,7 @@ def _run_embedding_job(job_id: str, mode: str):
         failures = []
 
         for product_id, product_code, name, description in targets:
-            text = _normalize_passage_text(f"{name} {description or ''}".strip())
+            text = f"{name} {description or ''}".strip()
             try:
                 embedding = model.encode(text, normalize_embeddings=True, convert_to_numpy=True)
                 embedding = adjust_dimension(embedding)
@@ -168,7 +157,7 @@ def _run_embedding_job(job_id: str, mode: str):
                 cur.execute(
                     """
                     UPDATE products
-                    SET embedding = %s::vector(1536)
+                    SET embedding = %s::vector(1024)
                     WHERE id = %s
                     """,
                     (embedding_str, product_id),
@@ -299,8 +288,7 @@ def similarity_search(payload: SimilaritySearchRequest):
     else:
         if not payload.text:
             raise HTTPException(status_code=400, detail="text が必要です")
-        q = _normalize_query_text(payload.text)
-        query_embedding = model.encode(q, normalize_embeddings=True, convert_to_numpy=True)
+        query_embedding = model.encode(payload.text, normalize_embeddings=True, convert_to_numpy=True)
         query_embedding = adjust_dimension(query_embedding)
 
     items = _search_with_vector(query_embedding, payload.topK, payload.scoreThreshold, payload.category)

@@ -36,7 +36,7 @@ from app.utils.vector_utils import parse_vector_string, ensure_same_dimension
 _model_cache = {}
 
 
-def get_model(model_name: str = "intfloat/multilingual-e5-large") -> SentenceTransformer:
+def get_model(model_name: str = "BAAI/bge-m3") -> SentenceTransformer:
     """モデルを取得（キャッシュから読み込みまたは新規読み込み）"""
     global _model_cache
     if model_name not in _model_cache:
@@ -55,16 +55,11 @@ def search_similar_products(
     model: SentenceTransformer,
     limit: int = 10,
     min_similarity: float = 0.0,
-    model_name: str = "intfloat/multilingual-e5-large"
+    model_name: str = "BAAI/bge-m3"
 ) -> List[Tuple]:
     """クエリテキストと類似した商品を検索"""
     cursor = connection.cursor()
-    
-    # クエリテキストをベクトル化（multilingual-e5-largeの場合は"query: "プレフィックスを追加）
-    if "multilingual-e5" in model_name.lower():
-        if not query_text.startswith("query: "):
-            query_text = "query: " + query_text
-    
+
     query_embedding = model.encode(query_text, normalize_embeddings=True, convert_to_numpy=True).astype(np.float32)
     
     cursor.execute("""
@@ -218,7 +213,7 @@ def main():
     parser.add_argument("--product-id", type=int, help="比較する商品ID（--compare-products使用時）")
     parser.add_argument("--limit", type=int, default=10, help="結果の最大件数（デフォルト: 10）")
     parser.add_argument("--min-similarity", type=float, default=0.0, help="最小類似度（デフォルト: 0.0）")
-    parser.add_argument("--model", default="intfloat/multilingual-e5-large", help="使用するモデル名")
+    parser.add_argument("--model", default="BAAI/bge-m3", help="使用するモデル名")
     
     args = parser.parse_args()
     

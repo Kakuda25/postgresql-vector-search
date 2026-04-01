@@ -8,10 +8,9 @@
 CREATE EXTENSION IF NOT EXISTS "vector";
 
 -- productsテーブルにベクトルカラムを追加
--- 1536次元はOpenAI text-embedding-ada-002の次元数に合わせている
--- 他のモデルを使用する場合は次元数を変更する必要がある
-ALTER TABLE products 
-ADD COLUMN IF NOT EXISTS embedding vector(1536);
+-- 1024次元はBAAI/bge-m3モデルの出力次元数
+ALTER TABLE products
+ADD COLUMN IF NOT EXISTS embedding vector(1024);
 
 -- embeddingカラムの説明
 COMMENT ON COLUMN products.embedding IS '商品名と説明をベクトル化した埋め込みベクトル（AI生成）';
