@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            http-equiv="Content-Security-Policy"
+            content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+        />
+        <title>Vector Search Store</title>
+        <link rel="stylesheet" href="/assets/tokens.css?v=3" />
+        <link rel="stylesheet" href="/assets/catalog.css?v=3" />
+        <link rel="stylesheet" href="/assets/admin.css?v=3" />
+    </head>
+    <body>
+        <div id="catalogApp" class="catalog-shell hidden">
+            <aside class="catalog-sidebar">
+                <a class="catalog-brand" href="#/catalog">
+                    <span class="catalog-brand-mark" aria-hidden="true">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+                    </span>
+                    <span>Vector Search Store</span>
+                </a>
+                <nav class="catalog-nav">
+                    <a href="#/catalog" data-catalog-nav="home">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                        ホーム
+                    </a>
+                    <div class="catalog-nav-section">カテゴリ</div>
+                    <div id="catalogCategoryNav" class="catalog-nav"></div>
+                </nav>
+            </aside>
+            <div class="catalog-main">
+                <header class="catalog-header">
+                    <form class="catalog-search-form" data-catalog-search-form>
+                        <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                        <input
+                            type="search"
+                            data-catalog-search-input
+                            placeholder="商品名や特徴で検索（例: ワイヤレスイヤホン）"
+                            maxlength="500"
+                        />
+                        <button type="submit">検索</button>
+                    </form>
+                    <a class="catalog-admin-link" href="#/admin/dashboard">管理画面</a>
+                </header>
+                <main class="catalog-content">
+                    <section class="catalog-view" data-catalog-view="home">
+                        <h2 class="catalog-section-title">商品一覧</h2>
+                        <div id="catalogHomeState" class="catalog-state"></div>
+                        <div id="catalogHomeGrid"></div>
+                    </section>
+
+                    <section class="catalog-view" data-catalog-view="search">
+                        <h2 id="catalogSearchTitle" class="catalog-section-title">検索結果</h2>
+                        <div id="catalogSearchState" class="catalog-state"></div>
+                        <div id="catalogSearchGrid"></div>
+                    </section>
+
+                    <section class="catalog-view" data-catalog-view="product">
+                        <div id="catalogProductRoot"></div>
+                        <section class="similar-section">
+                            <h2>類似商品</h2>
+                            <div id="catalogSimilarState" class="catalog-state"></div>
+                            <div id="catalogSimilarGrid"></div>
+                        </section>
+                    </section>
+                </main>
+            </div>
+        </div>
+
+        <div id="adminApp" class="admin-shell hidden">
+            <header class="admin-topbar">
+                <h1>Vector Search 管理画面</h1>
+                <a class="admin-store-link" href="#/catalog">ストアを見る</a>
+            </header>
+            <nav class="admin-nav">
+                <a href="#/admin/dashboard" data-admin-nav>ダッシュボード</a>
+                <a href="#/admin/products" data-admin-nav>商品管理</a>
+                <a href="#/admin/search" data-admin-nav>類似検索</a>
+                <a href="#/admin/operations" data-admin-nav>Embedding運用</a>
+            </nav>
+            <main class="admin-container">
+                <section class="admin-panel admin-view" data-admin-view="dashboard">
+                    <h2>ダッシュボード</h2>
+                    <div id="summary" class="kpi-grid"></div>
+                    <div id="health" class="admin-state">読込中...</div>
+                </section>
+
+                <section class="admin-panel admin-view" data-admin-view="products">
+                    <h2>商品管理</h2>
+                    <div class="admin-row">
+                        <input id="productQuery" placeholder="商品名/コードで検索" />
+                        <select id="embeddingStatus">
+                            <option value="">全件</option>
+                            <option value="embedded">生成済み</option>
+                            <option value="missing">未生成</option>
+                        </select>
+                        <select id="productCategory">
+                            <option value="">全カテゴリ</option>
+                        </select>
+                        <button id="loadProductsBtn">再読込</button>
+                    </div>
+                    <div id="productsState" class="admin-state"></div>
+                    <table id="productsTable" class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>コード</th>
+                                <th>商品名</th>
+                                <th>カテゴリ</th>
+                                <th>価格</th>
+                                <th>Embedding</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </section>
+
+                <section class="admin-panel admin-view" data-admin-view="search">
+                    <h2>類似検索</h2>
+                    <div class="admin-row">
+                        <select id="queryType">
+                            <option value="text">自由テキスト</option>
+                            <option value="product">商品ID</option>
+                        </select>
+                        <input id="queryValue" placeholder="ワイヤレスイヤホン / 1" />
+                        <input id="topK" type="number" min="1" max="50" value="10" />
+                        <input id="threshold" type="number" min="-1" max="1" step="0.01" value="0" />
+                        <select id="searchCategory">
+                            <option value="">全カテゴリ</option>
+                        </select>
+                        <button id="runSearchBtn">検索</button>
+                    </div>
+                    <div id="searchState" class="admin-state"></div>
+                    <table id="searchTable" class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>順位</th>
+                                <th>スコア</th>
+                                <th>コード</th>
+                                <th>商品名</th>
+                                <th>カテゴリ</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </section>
+
+                <section class="admin-panel admin-view" data-admin-view="operations">
+                    <h2>Embedding運用</h2>
+                    <div class="admin-row">
+                        <select id="jobMode">
+                            <option value="missing">未生成のみ</option>
+                            <option value="all">全件</option>
+                        </select>
+                        <button id="startJobBtn">生成開始</button>
+                    </div>
+                    <div id="jobState" class="admin-state"></div>
+                    <div id="jobFailuresState" class="admin-state"></div>
+                    <table id="jobFailuresTable" class="admin-table" hidden>
+                        <thead>
+                            <tr>
+                                <th>商品ID</th>
+                                <th>コード</th>
+                                <th>理由</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </section>
+            </main>
+        </div>
+
+        <script src="/assets/shared.js?v=3"></script>
+        <script src="/assets/router.js?v=3"></script>
+        <script src="/assets/catalog.js?v=3"></script>
+        <script src="/assets/admin.js?v=3"></script>
+        <script src="/assets/app.js?v=3"></script>
+    </body>
+</html>

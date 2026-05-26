@@ -1,0 +1,190 @@
+---
+description: 技術スタック・実行環境・依存関係（SSOT）
+globs:
+alwaysApply: false
+---
+
+<context>
+本プロジェクトの技術スタック、実行環境、主要ライブラリ、配置方針をまとめる参照資料です。
+機能仕様・アーキテクチャ・API 詳細は `.cursor/order/projectFeatures.mdc` を参照してください。
+</context>
+
+<task>
+実装時に既存の技術スタックと配置規則を確認し、重複導入や同機能の二重実装を避けてください。
+ライブラリや実行環境を変更した場合は、この文書を更新してください。
+</task>
+
+# 技術スタック概要
+
+| 区分 | 採用技術 |
+|------|----------|
+| 言語 | Python 3（venv 利用） |
+| DB | PostgreSQL 16 + pgvector |
+| コンテナ | Docker Compose（`name: vector-search`） |
+| Web API | FastAPI + Uvicorn |
+| 埋め込み | Sentence Transformers + PyTorch |
+| DB ドライバ | psycopg2-binary |
+| 数値計算 | NumPy |
+
+---
+
+# 実行環境
+
+## Docker Compose
+
+| サービス | イメージ | コンテナ名 | 用途 |
+|----------|----------|------------|------|
+| postgres | `pgvector/pgvector:pg16` | `postgres_db` | メイン DB |
+| pgadmin | `dpage/pgadmin4:latest` | `pgadmin` | 管理 UI（オプション） |
+
+- 初回起動時: `setup/init-scripts/` → `/docker-entrypoint-initdb.d`（辞書順で自動実行）
+- 永続ボリューム: `postgres_data`, `pgadmin_data`
+- ネットワーク: `postgres_network`（bridge）
+- Postgres リソース上限: 2 CPU / 2G RAM
+
+根拠: `docker-compose.yml`
+
+## Python 仮想環境
+
+| 項目 | 値 |
+|------|-----|
+| 配置 | プロジェクトルート `venv/` |
+| セットアップ | `setup/scripts/setup-venv.ps1`（Windows）/ `setup-venv.sh`（Linux/Mac） |
+| 依存インストール | `pip install -r requirements.txt` |
+
+根拠: `setup/scripts/setup-venv.ps1`, `setup/scripts/setup-venv.sh`
+
+## Web UI 起動
+
+```bash
+python app/scripts/run-web-ui.py
+```
+
+- Uvicorn: `app.api.main:app`, `host=0.0.0.0`, `port=8000`, `reload=False`
+- アクセス: `http://localhost:8000`
+
+根拠: `app/scripts/run-web-ui.py`
+
+---
+
+# Python 依存関係
+
+`requirements.txt`（2025-05 時点）:
+
+| パッケージ | 用途 |
+|------------|------|
+| `psycopg2-binary>=2.9.0` | PostgreSQL 接続 |
+| `fastapi>=0.115.0` | REST API |
+| `uvicorn>=0.30.0` | ASGI サーバー |
+| `sentence-transformers>=2.2.0` | テキスト埋め込み |
+| `torch>=2.0.0` | モデル推論 |
+| `numpy>=1.24.0` | ベクトル演算 |
+
+---
+
+# 埋め込みモデル
+
+| 項目 | 値 |
+|------|-----|
+| 本番モデル | `BAAI/bge-m3` |
+| 出力次元 | 1024 |
+| DB カラム | `products.embedding vector(1024)` |
+| 正規化 | `normalize_embeddings=True` |
+| プレフィックス | **不要**（bge-m3。e5 系とは異なる） |
+
+- API: モデル名固定（`app/api/main.py` の `MODEL_NAME`）
+- CLI: `--model` で変更可（デフォルト `BAAI/bge-m3`）
+
+**参考用サンプル（本番パス外）**: `setup/examples/e5-usage-example.py` は `intfloat/multilingual-e5-large` を使用。`query:` / `passage:` プレフィックスが必要。
+
+---
+
+# 環境変数
+
+## Docker / `.env`（`env.template` ベース）
+
+| 変数 | テンプレート例 | Compose デフォルト | 用途 |
+|------|----------------|-------------------|------|
+| `POSTGRES_DB` | `shopDB` | `shopDB` | DB 名 |
+| `POSTGRES_USER` | `postgres` | `postgres` | DB ユーザー |
+| `POSTGRES_PASSWORD` | （要設定） | — | DB パスワード |
+| `POSTGRES_PORT` | `5432` | `5432` | ホスト公開ポート |
+| `PGADMIN_EMAIL` | `admin@example.com` | 同上 | pgAdmin ログイン |
+| `PGADMIN_PASSWORD` | （要設定） | — | pgAdmin パスワード |
+| `PGADMIN_PORT` | `5050` | `5050` | pgAdmin 公開ポート |
+
+## アプリ接続（`app/utils/env_loader.py`）
+
+| 変数 | デフォルト | 備考 |
+|------|------------|------|
+| `POSTGRES_HOST` | `localhost` | `env.template` には未記載 |
+| `POSTGRES_PORT` | `5432` | |
+| `POSTGRES_DB` | `shopDB` | |
+| `POSTGRES_USER` | `postgres` | |
+| `POSTGRES_PASSWORD` | なし | **必須**。未設定時 CLI は `sys.exit(1)`、API は HTTP 500 |
+
+`.env` 読み込み: プロジェクトルート、複数エンコーディング対応（utf-8 / shift_jis 等）、`os.environ.setdefault` で既存値を上書きしない。
+
+---
+
+# ディレクトリ配置規則
+
+```
+vector-search/
+├── app/                    # アプリケーション（デプロイ対象）
+│   ├── api/                # FastAPI
+│   ├── scripts/            # CLI（埋め込み生成・検索・Web 起動）
+│   ├── utils/              # DB 接続・env・ベクトル共通処理
+│   └── web/                # 静的 Web UI（HTML/JS/CSS）
+├── setup/                  # 環境構築・検証（デプロイ対象外）
+│   ├── init-scripts/       # DB 初期化 SQL
+│   ├── scripts/            # venv セットアップ等
+│   └── examples/           # サンプル・検証
+├── docker-compose.yml
+├── env.template
+├── requirements.txt
+└── venv/                   # 仮想環境（Git 除外）
+```
+
+| ルール | 内容 |
+|--------|------|
+| 新規 API | `app/api/` に追加。共通処理は `app/utils/` |
+| 新規 CLI | `app/scripts/` |
+| DB スキーマ変更 | `setup/init-scripts/` に番号付き SQL を追加 |
+| 環境構築のみ | `setup/` に配置（`app/` と混在させない） |
+
+---
+
+# セットアップスクリプト（setup/scripts/）
+
+| スクリプト | 用途 |
+|------------|------|
+| `setup.sh` | `.env` 生成 → `docker-compose up -d` |
+| `setup-venv.ps1` / `setup-venv.sh` | venv 作成 + `requirements.txt` インストール |
+| `load-env.ps1` | `.env` を PowerShell 環境変数へ読み込み |
+| `align-postgres-password-with-env.ps1` | 既存ボリュームの DB パスワードを `.env` と同期 |
+| `run-example.ps1` | 対話メニュー（埋め込み生成 / 類似検索 / e5 例） |
+
+---
+
+# 制約・セキュリティ
+
+- 本番 DB 認証情報を公開リポジトリへコミットしない（`.env` は Git 除外）
+- 新規ライブラリ導入前に `requirements.txt` と既存 utils を確認
+- 技術スタック詳細は本書に集約し、`projectFeatures.mdc` へ重複記載しない
+
+<references>
+- `docker-compose.yml`
+- `requirements.txt`
+- `env.template`
+- `app/utils/env_loader.py`
+- `app/utils/vector_utils.py`（`VECTOR_DIMENSION = 1024`）
+- `setup/init-scripts/02-tables.sql`
+</references>
+
+<output_format>
+- 確認した技術スタック
+- 依存追加・変更の有無
+- 重複導入を避けるための判断
+- 必要なドキュメント更新
+</output_format>

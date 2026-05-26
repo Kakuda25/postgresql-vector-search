@@ -1,0 +1,152 @@
+---
+description: 作業開始・仕様設定オーダー（start / set / audit — セッション開始・仕様書込・差分調査）
+globs:
+alwaysApply: false
+---
+
+<context>
+このオーダーは、実装作業の共通入口と、`projectFeatures.mdc`・`TechStack.mdc` の設定・照合を担う単一のオーダーです。
+モードに応じて作業開始、仕様の書込、差分調査を実行してください。
+明示的に指定された場合のみ実行し、他タスク中に参照した場合は開発方針として認識するに留めてください。
+</context>
+
+<references>
+- `.cursor/order/ai-order.index.mdc` … 作業手順・修正後フロー
+- `.cursor/order/TechStack.mdc` … 技術スタック・依存関係
+- `.cursor/order/projectFeatures.mdc` … 機能仕様・アーキテクチャ
+- `package/` … set / audit 時の調査対象
+</references>
+
+# モード選択
+
+| モード | いつ使う | コード変更 | ドキュメント変更 |
+|--------|----------|:----------:|:----------------:|
+| **start**（デフォルト） | 作業セッション開始 | 可 | 不可（読取のみ） |
+| **set** | 初回作成・修正後・仕様更新 | 不可 | 可 |
+| **audit** | 実装と仕様の差異調査 | 不可 | 不可（読取のみ） |
+
+モードが明示されていない場合は **start** とみなす。
+「仕様同期」「projectFeatures 更新」「初回作成」「全面更新」等 → **set**
+「差異調査」「仕様照合」「get-config」等 → **audit**
+
+---
+
+## モード: start（作業開始）
+
+<task>
+`.cursor/order/TechStack.mdc` と `.cursor/order/projectFeatures.mdc` を確認し、本モードの進行規則に従って計画を立ててから作業してください。
+</task>
+
+<requirements>
+- 修正・追加・調査の前に計画を作成し、ステップごとに実装する。
+- `.cursor/order/TechStack.mdc` と `.cursor/order/projectFeatures.mdc` を確認する（未存在の場合は **set** / full を検討）。
+- 最終的な出力は必ず日本語で提供する。
+- 3ステップ以上またはアーキテクチャに関わる作業では、計画を Markdown で作成する。
+- レイアウト修正はスタイリングだけで無理に解決せず、必要に応じて構造を最適化してからスタイリングする。
+- 未使用の関数、クラス、import、パッケージを排除する。
+- レスポンシブ対応かつ改修しやすい構造にする。
+- 無駄に深いネストや不要なラッパーを排除する。
+- ライブラリの重複導入や同機能の二重実装を避ける。
+- リサーチ、調査、並列分析にはサブエージェントを積極的に活用する。
+- サブエージェントは 1 タスクにつき 1 つ割り当てる。
+</requirements>
+
+<coding_standards>
+- コメントはコードから読み取れない意図、制約、トレードオフを補う場合のみ書く。
+- 使用されていないコードは削除する。
+- DRY 原則に従い、重複を避ける。
+</coding_standards>
+
+<after_work>
+実装・修正完了後は `.cursor/order/ai-order.index.mdc` の「修正後」フローに従う。
+- 必須: 本書「check」手順（または `/run-order-postfix`）
+- 仕様に影響あり: 本オーダーの **set** モード
+</after_work>
+
+<constraints>
+- `.cursor/order/TechStack.mdc` と `.cursor/order/projectFeatures.mdc` を確認せずに実装を開始しない。
+- 一時的な見た目合わせで構造上の問題を隠さない。
+- 技術的負債を増やす変更を避ける。
+- 技術スタックの確認なしに新規ライブラリや重複実装を導入しない。
+</constraints>
+
+<output_format>
+- 作業計画
+- 実施内容
+- 変更ファイル
+- 確認した参照資料
+- 残るリスク
+</output_format>
+
+---
+
+## モード: set（仕様設定・書込）
+
+<task>
+`.cursor/order/projectFeatures.mdc` および必要に応じて `.cursor/order/TechStack.mdc` を、現行実装に合わせて作成または更新してください。
+</task>
+
+### スコープの自動判定
+
+| 条件 | スコープ | 動作 |
+|------|----------|------|
+| `projectFeatures.mdc` が存在しない | **full** | システム構成全体を調査し新規作成 |
+| 「全面更新」「初回作成」「全体再調査」等の明示 | **full** | 全体を再調査し全面更新 |
+| 修正後・直近変更・該当項目のみ等（デフォルト） | **incremental** | 直近の実装に該当する項目のみ更新 |
+
+**incremental** では関係ない項目を触らない。**full** では `package/`・`package/db/`・主要画面・API を広く調査する。
+
+<requirements>
+- 実装を確認し、根拠ファイル単位で仕様を記載する。
+- 各モジュールの仕様、DB パス、データスキーマ、アプリ間の結合点を必要に応じて明記する。
+- 技術スタック詳細は `.cursor/order/TechStack.mdc` に委譲し、`projectFeatures.mdc` へ重複記載しない。
+- ライブラリの追加・削除があった場合は `.cursor/order/TechStack.mdc` も更新する。
+- 未確認事項は未確認として明記する。
+</requirements>
+
+<constraints>
+- 推測で仕様を書かない。
+- incremental 時は実装と関係しない項目を不用意に書き換えない。
+- 技術スタック詳細を `projectFeatures.mdc` に重複記載しない。
+</constraints>
+
+<output_format>
+- 実行モード（set）とスコープ（full / incremental）
+- 作成または更新したファイル
+- 更新した項目（incremental）または主要仕様（full）
+- 更新理由
+- 根拠となる実装
+- TechStack 更新の有無
+- 未確認事項
+</output_format>
+
+---
+
+## モード: audit（仕様照合・読取のみ）
+
+<task>
+プロジェクトのシステム構成を調査し、`.cursor/order/projectFeatures.mdc` と実装の差異を抽出してください。
+</task>
+
+<requirements>
+- 実装上の現行仕様を確認する。
+- `projectFeatures.mdc` に記載された仕様と照合する。
+- 記載漏れ、古い記述、実装との差異を抽出する。
+- 差異は根拠となるファイル単位で整理する。
+- 更新が必要な場合は **set** モードの推奨スコープ（full / incremental）を示す。
+</requirements>
+
+<constraints>
+- `.cursor/order/projectFeatures.mdc` が存在しない場合は処理を終了し、**set** / full の実行を案内する。
+- 差異の抽出と報告のみ行う。
+- 修正、変更、削除、追記は行わない。
+</constraints>
+
+<output_format>
+- 実行モード（audit）
+- 調査範囲
+- 差異一覧
+- 実装側が正と思われる根拠
+- 推奨する set スコープ（full / incremental）
+- 未確認事項
+</output_format>

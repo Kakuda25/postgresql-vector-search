@@ -1,0 +1,154 @@
+---
+description: 作業手順の索引（フロー判断・check / deep-fix / neat 手順）
+globs:
+alwaysApply: false
+---
+
+<context>
+この文書は `.cursor/order` の手順レイヤーです。知識は `TechStack.mdc`・`projectFeatures.mdc`、実行入口は `ai-order.set.mdc` を参照してください。
+各手順は明示的に指定された場合、またはグローバルコマンド（`~/.cursor/commands/` の `/read-order` 等）経由で実行してください。
+作業記録・調査メモはワークスペースの `.cursor/docs/` に保存する（`/create-doc-md`）。
+</context>
+
+<references>
+- `.cursor/order/TechStack.mdc`
+- `.cursor/order/projectFeatures.mdc`
+- `.cursor/order/ai-order.set.mdc`
+</references>
+
+# .cursor/order 構成（知識 2 + 手順 2）
+
+| 種別 | ファイル | 役割 |
+|------|----------|------|
+| 知識 | `TechStack.mdc` | 技術スタック・依存 |
+| 知識 | `projectFeatures.mdc` | 機能仕様・アーキテクチャ |
+| 手順 | `ai-order.index.mdc` | 本書（フロー・精査・深掘り修正） |
+| 手順 | `ai-order.set.mdc` | start / set / audit（進行規則含む） |
+
+**関連**: 作業記録・調査メモ → `.cursor/docs/`（知識の SSOT ではない）
+
+# 判断フロー
+
+## 作業開始
+
+1. 知識 2 ファイルを確認（または `/read-order`）
+2. `ai-order.set.mdc`（**start**）で計画を立てる
+
+## 修正の種類
+
+| 状況 | 手順 |
+|------|------|
+| バグ・原因不明・競合の疑い | 本書「deep-fix」→ 修正後フロー |
+| 小さな変更・仕様が明確 | start の進行規則のみ |
+
+## 修正後（フロー漏れ防止）
+
+```
+修正完了
+  → check（直近変更の精査）
+  → 仕様・API・DB・画面に影響あり？
+       Yes → ai-order.set.mdc（set / incremental）
+       No  → 終了
+```
+
+コマンド: `/run-order-postfix`（check → set を一括）
+
+## 定期監査
+
+| 目的 | 手順 |
+|------|------|
+| コード全体の品質・セキュリティ | 本書「neat」 |
+| 仕様ドキュメントの陳腐化 | `ai-order.set.mdc`（**audit**） |
+
+# 精査の使い分け
+
+| 手順 | 対象 | 書込 |
+|------|------|:----:|
+| **check** | 直近の git 差分・今回の変更 | 不可 |
+| **neat** | リポジトリ全体の実装 | 不可 |
+| **set audit** | 実装 vs projectFeatures | 不可 |
+
+---
+
+## 手順: check（直近変更の精査）
+
+<task>
+直近の変更箇所（git 差分・今回のセッションで変更したファイル）を精査し、不整合・潜在エラー・重複・変更漏れを調査してください。
+</task>
+
+<requirements>
+- 調査範囲を明示する。
+- 不整合、潜在エラー、重複、変更漏れ、同様処理への未適用を確認する。
+- 仕様影響ありの場合は `ai-order.set.mdc`（**set** / incremental）を推奨する。
+</requirements>
+
+<constraints>
+- 調査と報告のみ。修正・リファクタリングは行わない。
+- 問題を発見しても最後まで確認する。
+</constraints>
+
+<output_format>
+- 調査範囲
+- 発見事項
+- 影響範囲
+- 推奨方針
+- projectFeatures 更新の要否
+- 未確認事項
+</output_format>
+
+---
+
+## 手順: deep-fix（深掘り修正）
+
+<task>
+修正対象の処理を起点から終点まで追跡し、根本原因と競合要因を特定したうえで修正してください。
+</task>
+
+<requirements>
+- 処理の流れを最初から最後まで、周辺も含めて把握する。
+- 根本原因を突き止め、競合・阻害要因が残っていないか確認する。
+- 修正完了後、必ず本書「check」を実行する。
+- 仕様影響ありの場合は `ai-order.set.mdc`（**set** / incremental）を実行する。
+</requirements>
+
+<constraints>
+- 一時的な回避策で済ませない。
+- 根本原因が不明なまま修正しない。
+- 既存機能の意図を確認せずに削除・置換しない。
+</constraints>
+
+<output_format>
+- 調査した処理の流れ
+- 根本原因
+- 修正方針
+- 実施した修正
+- check に基づく精査結果
+- projectFeatures 更新の有無
+- 残るリスク
+</output_format>
+
+---
+
+## 手順: neat（実装全体の精査）
+
+<task>
+現在の実装を全体に渡って精査し、不整合、潜在エラー、セキュリティ、重複、未使用実装を調査してください。
+</task>
+
+<requirements>
+- 不整合、潜在エラー、セキュリティ、重複、DRY/ETC 違反、強結合、未使用モジュールを確認する。
+- 発見事項は重大度（高・中・低）で分類する。
+</requirements>
+
+<constraints>
+- 調査と報告のみ。修正・リファクタリングは行わない。
+- 問題を発見しても最後まで確認する。
+</constraints>
+
+<output_format>
+- 調査範囲
+- 重大度別の発見事項
+- 影響範囲
+- 改善優先度
+- 未確認事項
+</output_format>

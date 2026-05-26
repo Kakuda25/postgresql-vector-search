@@ -1,0 +1,454 @@
+---
+description: 機能仕様・アーキテクチャ・DB・API（SSOT）
+globs:
+alwaysApply: false
+---
+
+<context>
+本プロジェクトの機能仕様、アーキテクチャ、データスキーマ、画面・API・DB の連携点をまとめる仕様資料です。
+技術スタック詳細は `.cursor/order/TechStack.mdc` を参照してください。
+</context>
+
+<task>
+実装や調査を行う際は、この文書で現行仕様を確認し、変更が発生した場合は該当項目を最新状態に保ってください。
+</task>
+
+# プロジェクト概要
+
+通販サイト風商品カタログの**ベクトル類似検索**サンプルアプリケーション。
+
+| 能力 | 説明 |
+|------|------|
+| 商品マスタ管理 | PostgreSQL に商品・在庫を保持 |
+| 埋め込み生成 | 商品名 + 説明を `BAAI/bge-m3` でベクトル化 |
+| 類似検索 | テキストクエリまたは商品 ID ベースのコサイン類似度検索 |
+| Web UI | ダッシュボード / 商品一覧 / 類似検索 / Embedding 運用 |
+
+---
+
+# システム構成
+
+```mermaid
+flowchart TB
+  subgraph client [クライアント]
+    WebUI[app/web/]
+    CLI[app/scripts/]
+  end
+  subgraph app_layer [アプリ層]
+    API[app/api/main.py]
+    Utils[app/utils/]
+  end
+  subgraph infra [インフラ]
+    Docker[docker-compose.yml]
+    PG[(PostgreSQL 16 + pgvector)]
+  end
+  WebUI -->|REST| API
+  CLI --> Utils
+  API --> Utils
+  Utils --> PG
+  Docker -->|init-scripts| PG
+```
+
+| レイヤ | パス | 役割 |
+|--------|------|------|
+| Web UI | `app/web/` | SPA（hash ルーティング）、静的配信 `/assets` |
+| API | `app/api/main.py` | FastAPI v0.1.0 |
+| CLI | `app/scripts/` | 埋め込み一括生成・対話型検索 |
+| 共通 | `app/utils/` | DB 接続、env、ベクトル処理 |
+| DB 初期化 | `setup/init-scripts/` | 拡張・テーブル・インデックス・シード |
+| 環境構築 | `setup/scripts/` | venv・Docker 起動補助 |
+
+---
+
+# データベース
+
+## 拡張機能
+
+| 拡張 | 用途 |
+|------|------|
+| `vector` | pgvector（`embedding` カラム・HNSW） |
+| `pg_trgm` | 商品名・説明のあいまい検索（GIN） |
+
+根拠: `setup/init-scripts/01-init.sql`
+
+## テーブル: `products`
+
+| カラム | 型 | 制約 |
+|--------|-----|------|
+| `id` | SERIAL | PK |
+| `product_code` | VARCHAR(50) | NOT NULL UNIQUE |
+| `name` | VARCHAR(255) | NOT NULL |
+| `description` | TEXT | |
+| `price` | DECIMAL(10,2) | NOT NULL, >= 0 |
+| `status` | VARCHAR(20) | DEFAULT `active`, CHECK: active/inactive/discontinued/out_of_stock |
+| `image_url` | VARCHAR(500) | |
+| `weight_kg` | DECIMAL(8,2) | |
+| `dimensions` | VARCHAR(100) | |
+| `category` | VARCHAR(50) | NULL 可。`product_code` プレフィックスから自動設定 |
+| `embedding` | **vector(1024)** | NULL 可 |
+| `created_at` | TIMESTAMPTZ | DEFAULT now |
+| `updated_at` | TIMESTAMPTZ | トリガーで自動更新 |
+
+根拠: `setup/init-scripts/02-tables.sql`
+
+## テーブル: `product_stocks`
+
+| カラム | 型 | 制約 |
+|--------|-----|------|
+| `product_id` | INTEGER | PK, FK → products(id) ON DELETE CASCADE |
+| `quantity` | INTEGER | NOT NULL DEFAULT 0, >= 0 |
+| `updated_at` | TIMESTAMPTZ | トリガーで自動更新 |
+
+## インデックス
+
+| 名前 | 種別 | 対象 |
+|------|------|------|
+| `idx_products_product_code` | B-tree | `product_code` |
+| `idx_products_status` | B-tree | `status` |
+| `idx_products_price` | B-tree | `price` |
+| `idx_products_created_at` | B-tree | `created_at` |
+| `idx_products_name_trgm` | GIN | `name` (gin_trgm_ops) |
+| `idx_products_description_trgm` | GIN | `description` |
+| `idx_products_category` | B-tree | `category` |
+| `idx_product_stocks_quantity` | B-tree | `quantity` |
+| `idx_products_embedding_hnsw` | HNSW | `embedding vector_cosine_ops` (m=16, ef_construction=64) |
+
+根拠: `setup/init-scripts/03-indexes.sql`
+
+## シードデータ
+
+- **41 件**の通販商品（`ON CONFLICT DO NOTHING`）
+- **41 件**の在庫（`product_stocks`）
+- 8 カテゴリ × 5〜6 件（家電・ファッション・食品ほか）
+- 初期 `embedding` は **全件 NULL**（Python で後投入）
+
+根拠: `setup/init-scripts/04-seed-data.sql`
+
+## Init スクリプト実行順
+
+| 順 | ファイル | 備考 |
+|----|----------|------|
+| 01 | `01-init.sql` | 拡張 |
+| 02 | `02-tables.sql` | テーブル |
+| 03 | `03-indexes.sql` | インデックス |
+| 04 | `04-seed-data.sql` | シード |
+| 05 | `05-vector-migration.sql` | 既存 DB 向け（新規では冪等） |
+| 06 | `06-vector-search-examples.sql` | コメントのみ（SQL 実行なし） |
+| 07 | `07-add-embeddings.sql` | 未設定件数 NOTICE + 集計 SELECT |
+| 08 | `08-add-category.sql` | 既存 DB 向け category 列（新規では冪等） |
+| 09 | `09-embedding-jobs-table.sql` | `embedding_jobs` テーブル |
+
+## テーブル: `embedding_jobs`
+
+| カラム | 型 | 備考 |
+|--------|-----|------|
+| `job_id` | UUID | PK |
+| `mode` | VARCHAR(20) | `all` / `missing` |
+| `status` | VARCHAR(20) | `queued` / `running` / `done` / `error` |
+| `progress` | DOUBLE PRECISION | 0.0–1.0 |
+| `total` | INTEGER | 対象件数 |
+| `success_count` | INTEGER | 成功件数 |
+| `fail_count` | INTEGER | 失敗件数 |
+| `failures` | JSONB | 失敗詳細配列 |
+| `error` | TEXT | ジョブ全体エラー |
+| `created_at` / `started_at` / `finished_at` | TIMESTAMPTZ | |
+
+根拠: `setup/init-scripts/09-embedding-jobs-table.sql`, `app/utils/embedding_jobs.py`
+
+## カテゴリ値
+
+| value | ラベル | プレフィックス |
+|-------|--------|----------------|
+| `electronics` | 家電・PC | ELEC |
+| `fashion` | ファッション | FASH |
+| `food` | 食品 | FOOD |
+| `home` | インテリア・生活 | HOME |
+| `beauty` | 美容・コスメ | BEAU |
+| `sports` | スポーツ | SPOR |
+| `books` | 本・メディア | BOOK |
+| `toys` | おもちゃ・ホビー | TOYS |
+
+根拠: `app/utils/categories.py`, `04-seed-data.sql`（末尾 UPDATE）
+
+---
+
+# 埋め込み仕様
+
+| 項目 | 仕様 |
+|------|------|
+| モデル | `BAAI/bge-m3` |
+| 次元 | 1024 |
+| 入力テキスト | `{name} {description}`（description 省略可） |
+| 正規化 | L2 正規化（`normalize_embeddings=True`） |
+| 類似度 | 正規化ベクトルの内積 = コサイン類似度 |
+| 保存形式 | PostgreSQL `vector(1024)` 文字列表現 |
+
+### 次元調整（`app/utils/vector_utils.py`）
+
+- `adjust_dimension`: 不足はゼロパディング、超過は truncate（default 1024）
+- `ensure_same_dimension`: 2 ベクトルの max 次元に揃える（CLI 検索で使用）
+
+---
+
+# REST API
+
+ベース: FastAPI `app/api/main.py`（`version=0.1.0`）
+
+## 静的・ページ
+
+| Method | Path | 説明 |
+|--------|------|------|
+| GET | `/` | `app/web/index.html` |
+| GET | `/assets/*` | 静的ファイル（`app/web/`） |
+
+## システム
+
+| Method | Path | レスポンス |
+|--------|------|------------|
+| GET | `/api/system/health` | `{ api, db, pgvector, checkedAt }` |
+
+## ダッシュボード
+
+| Method | Path | レスポンス |
+|--------|------|------------|
+| GET | `/api/dashboard/summary` | `{ totalProducts, embeddedProducts, missingEmbeddings }` |
+
+## 商品
+
+| Method | Path | Query | レスポンス |
+|--------|------|-------|------------|
+| GET | `/api/products` | `q`, `embeddingStatus`, `category`, `limit` (default 100) | `{ items[] }` |
+| GET | `/api/products/{id}` | — | 単一商品 |
+
+item フィールド: `id`, `productCode`, `name`, `category`, `categoryLabel`, `price`, `embeddingStatus`, `description`, `imageUrl`
+
+## メタ
+
+| Method | Path | レスポンス |
+|--------|------|------------|
+| GET | `/api/meta/categories` | `{ items: [{ value, label }] }` |
+
+## 類似検索
+
+| Method | Path | Body |
+|--------|------|------|
+| POST | `/api/similarity/search` | `SimilaritySearchRequest` |
+
+**SimilaritySearchRequest**
+
+| フィールド | 型 | 制約 |
+|------------|-----|------|
+| `type` | string | `product` \| `text` |
+| `productId` | int | `type=product` 時必須 |
+| `text` | string | `type=text` 時必須 |
+| `topK` | int | 1–50, default 10 |
+| `scoreThreshold` | float | -1–1, default 0 |
+| `category` | string | 任意。`electronics` 等 8 値のいずれかでフィルタ |
+
+**検索アルゴリズム（API）**
+
+1. `type=text`: クエリをモデルで encode → `format_vector_for_pg`
+2. `type=product`: DB から embedding を取得 → `parse_vector_string` → `format_vector_for_pg`
+3. pgvector SQL: `ORDER BY embedding <=> query`（コサイン距離）、HNSW インデックス利用
+4. `scoreThreshold`: `1 - (embedding <=> query) >= threshold` でフィルタ
+5. `type=product` 時、`id != productId` で基準商品を除外
+6. `category` 指定時、`category = %s` でフィルタ
+
+根拠: `app/api/main.py` の `_search_with_vector`, `app/utils/vector_utils.py` の `format_vector_for_pg`
+
+レスポンス item: `productId`, `productCode`, `name`, `description`, `price`, `category`, `categoryLabel`, `score`, `rank`
+
+## Embedding ジョブ
+
+| Method | Path | 説明 |
+|--------|------|------|
+| POST | `/api/embeddings/jobs` | ジョブ開始。Body: `{ mode: "all" \| "missing" }` |
+| GET | `/api/embeddings/jobs/{job_id}` | ジョブ状態 |
+| GET | `/api/embeddings/failures?jobId=` | 失敗一覧 |
+
+**ジョブ状態**
+
+- PostgreSQL `embedding_jobs` テーブルに永続化（`app/utils/embedding_jobs.py`）
+- API 再起動時、`queued` / `running` は `error`（`server restarted`）に更新
+- ステータス: `queued` → `running` → `done` / `error`
+- バックグラウンド: `threading.Thread`（daemon）
+
+---
+
+# CLI スクリプト
+
+## `generate-embeddings.py`
+
+| 項目 | 仕様 |
+|------|------|
+| 対象 | `embedding IS NULL` のみ（**API の `missing` 相当。`all` 不可**） |
+| 引数 | `--model`（default `BAAI/bge-m3`） |
+| DB 接続 | `create_connection()` |
+| 失敗時 | 行ごと `rollback` して continue |
+
+## `search-similar-products.py`
+
+| モード | 引数 | 説明 |
+|--------|------|------|
+| テキスト検索 | 位置引数 `query` | `--limit`, `--min-similarity`, `--model` |
+| 商品比較 | `--compare-products --product-id N` | 基準商品を**除外**して類似商品を返す |
+
+- 次元揃え: `ensure_same_dimension`（API とは異なる方式）
+
+## `run-web-ui.py`
+
+- Uvicorn で API 起動（port 8000 固定、CLI 引数なし）
+
+---
+
+# Web UI
+
+ファイル: `app/web/index.html`, `tokens.css`, `catalog.css`, `admin.css`, `shared.js`, `router.js`, `catalog.js`, `admin.js`, `app.js`
+
+## エリア構成
+
+| エリア | プレフィックス | 利用者 |
+|--------|---------------|--------|
+| カタログ（Vector Search Store） | `#/catalog/...` | エンドユーザー |
+| 管理画面 | `#/admin/...` | 運用者 |
+
+- デフォルト入口: `#/` → `#/catalog`
+- 廃止・未知 hash → `#/catalog` へ転送
+- カタログ ↔ 管理の双方向リンク（「管理画面」/「ストアを見る」）
+
+## ルート（カタログ）
+
+| Route | 画面 | 初回ロード API |
+|-------|------|----------------|
+| `#/catalog` | 商品グリッド（全件 / カテゴリ絞り込み） | `/api/products`, `/api/meta/categories` |
+| `#/catalog/search` | 類似検索（空状態 or 結果） | `/api/similarity/search`（クエリあり時） |
+| `#/catalog/products/:id` | 商品詳細 + 類似商品 | `/api/products/{id}`, `/api/similarity/search` |
+
+## ルート（管理）
+
+| Route | 画面 | 初回ロード API |
+|-------|------|----------------|
+| `#/admin/dashboard` | KPI + ヘルス | `/api/dashboard/summary`, `/api/system/health` |
+| `#/admin/products` | 商品表 | `/api/products` |
+| `#/admin/search` | 類似検索（パラメータ露出） | 手動 |
+| `#/admin/operations` | Embedding ジョブ | 手動 |
+
+## フロント → API 対応
+
+| 操作 | API |
+|------|-----|
+| カタログ商品一覧 | GET `/api/products?category=` |
+| カタログ商品詳細 | GET `/api/products/{id}` |
+| カタログ検索 | POST `/api/similarity/search`（topK=10, threshold=0 固定） |
+| 商品詳細の類似商品 | POST `/api/similarity/search`（type=product） |
+| ダッシュボード | GET `/api/dashboard/summary`, `/api/system/health` |
+| 商品管理 | GET `/api/products?q=&embeddingStatus=&category=` |
+| 管理・類似検索 | POST `/api/similarity/search` |
+| Embedding 開始 | POST `/api/embeddings/jobs` |
+| ジョブ監視 | GET `/api/embeddings/jobs/{jobId}`（1.5s 間隔、最大 200 回） |
+| ジョブ失敗一覧 | GET `/api/embeddings/failures?jobId=` |
+
+## カタログ UI 仕様
+
+- 店舗名: Vector Search Store
+- デザイン: `.cursor/docs/Sample.jpg` 参考（サイドバー、ヘッダー検索、商品カード）
+- 類似度スコア: カタログでは非表示
+- 商品画像: `imageUrl` あれば表示、なければカテゴリ別プレースホルダ
+
+## フロントバリデーション
+
+- カタログ検索クエリ: 必須、500 文字以内
+- 管理・クエリ: 必須、500 文字以内
+- 管理・topK: 1–50 整数
+- 管理・scoreThreshold: -1〜1
+
+---
+
+# データフロー
+
+```mermaid
+sequenceDiagram
+  participant Seed as 04-seed-data.sql
+  participant DB as PostgreSQL
+  participant Gen as generate-embeddings / API job
+  participant Search as search CLI / API
+
+  Seed->>DB: INSERT products (embedding=NULL)
+  Gen->>DB: SELECT WHERE embedding IS NULL
+  Gen->>Gen: encode(name + description)
+  Gen->>DB: UPDATE embedding vector(1024)
+  Search->>DB: pgvector <=> (API) / NumPy dot (CLI)
+```
+
+---
+
+# 実装差異（CLI vs API）
+
+| 項目 | CLI | API |
+|------|-----|-----|
+| DB 接続 | `database.create_connection()` → `sys.exit` | `_get_connection()` → HTTPException |
+| 全件再生成 | 不可（missing のみ） | `mode=all` 可 |
+| 商品 ID 検索 | 基準商品を除外 | 基準商品を除外 |
+| 類似度計算 | NumPy 内積（Python 全件スキャン） | pgvector SQL `<=>` + HNSW |
+| ジョブ永続化 | なし（同期処理） | PostgreSQL `embedding_jobs` |
+
+---
+
+# ドキュメント参照
+
+| 文書 | 役割 |
+|------|------|
+| `README.md` | ユーザー向けクイックスタート・操作ガイド（2025-05 同期済み） |
+| `FLOW.md` | フロー図・日常操作（同期済み） |
+| `PROJECT_STRUCTURE.md` | ディレクトリ構成（同期済み） |
+| 本書 / `TechStack.mdc` | エージェント向け SSOT |
+
+---
+
+# 結合点
+
+| 起点 | 終点 | 方式 |
+|------|------|------|
+| Web UI | API | fetch REST（同一オリジン） |
+| API / CLI | PostgreSQL | psycopg2, `get_db_config()` |
+| API / CLI | モデル | SentenceTransformer（プロセス内キャッシュ） |
+| Docker 初回起動 | PostgreSQL | init-scripts 自動実行 |
+| pgAdmin | PostgreSQL | Compose ネットワーク経由 |
+
+---
+
+<constraints>
+- 実装を確認せずに推測で仕様を書かない。
+- 技術スタック詳細を本書に重複記載しない（`TechStack.mdc` へ委譲）。
+</constraints>
+
+<references>
+- `app/api/main.py`
+- `app/scripts/generate-embeddings.py`
+- `app/scripts/search-similar-products.py`
+- `app/scripts/run-web-ui.py`
+- `app/web/app.js`
+- `app/utils/database.py`
+- `app/utils/env_loader.py`
+- `app/utils/vector_utils.py`
+- `setup/init-scripts/*.sql`
+- `docker-compose.yml`
+</references>
+
+# 未確認事項
+
+| 項目 | 内容 |
+|------|------|
+| Python 最小バージョン | `setup-venv` スクリプト上の要求は未確認（3.10+ 想定だが明文化なし） |
+| 本番デプロイ構成 | 現状はローカル Docker + Uvicorn のみ。本番向け構成は未実装 |
+| pgvector HNSW の API 活用 | API は pgvector SQL 使用。CLI は引き続き Python 全件スキャン |
+| CI/CD | 未確認（ワークフロー不在） |
+
+**既存 DB への適用:** `08-add-category.sql` と `09-embedding-jobs-table.sql` を手動実行（初回 Compose 起動済みの場合）。
+
+<output_format>
+- 仕様確認結果
+- 実装との差異
+- 更新した仕様項目
+- 未確認事項
+</output_format>

@@ -1,0 +1,32 @@
+---
+description: .cursor ディレクトリ構成・知識/手順の参照先・作業フロー
+alwaysApply: true
+---
+
+# .cursor 構成
+
+プロジェクト固有の Cursor 設定は **`.cursor/`** のみに置く。グローバル（`~/.cursor/commands/`・`agents/`・`skills/`）は全プロジェクト共通。
+
+## ディレクトリ
+
+| パス | 種別 | 役割 |
+|------|------|------|
+| `.cursor/order/TechStack.mdc` | 知識 | 技術スタック・実行環境・依存（SSOT） |
+| `.cursor/order/projectFeatures.mdc` | 知識 | 機能仕様・アーキテクチャ・DB（SSOT） |
+| `.cursor/order/ai-order.index.mdc` | 手順 | フロー判断・check / deep-fix / neat |
+| `.cursor/order/ai-order.set.mdc` | 手順 | start / set / audit（作業入口・仕様書込） |
+| `.cursor/docs/` | 作業記録 | 調査メモ・セッション記録（知識の SSOT ではない） |
+| `.cursor/rules/` | ルール | 本ファイルなど、常時/条件付きのエージェント指針 |
+
+## 作業フロー
+
+1. **開始**: `TechStack.mdc` と `projectFeatures.mdc` を確認 → `ai-order.set.mdc`（**start**）で計画
+2. **実装後**: `ai-order.index.mdc` の **check** → 仕様影響ありなら `ai-order.set.mdc`（**set** / incremental）
+3. **未設定時**: 知識 2 ファイルが空なら `ai-order.set.mdc`（**set** / full）で作成
+
+## 参照の優先順位
+
+- 技術スタック詳細 → `TechStack.mdc`（`projectFeatures.mdc` に重複記載しない）
+- 機能・API・DB 仕様 → `projectFeatures.mdc`
+- 手順・精査 → `ai-order.index.mdc` / `ai-order.set.mdc`
+- 作業記録 → `.cursor/docs/`（`/create-doc-md`）

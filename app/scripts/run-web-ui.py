@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+import uvicorn
+
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+
+if __name__ == "__main__":
+    print("Web UI: http://localhost:8000/#/catalog")
+    uvicorn.run("app.api.main:app", host="0.0.0.0", port=8000, reload=False)
